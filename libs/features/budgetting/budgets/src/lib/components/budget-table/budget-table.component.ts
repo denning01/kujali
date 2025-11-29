@@ -1,12 +1,19 @@
-import { Component, EventEmitter, Input, Output, ViewChild } from '@angular/core';
+/**
+ * REFACTORED: Migrated from RxJS Observables to Angular Signals
+ * 
+ * Key Changes:
+ * 1. Replaced constructor injection with inject() function
+ * 2. Converted @Input() to signal-based inputs using input()
+ * 3. Replaced subscription with effect() for reactive side effects
+ * 4. Removed SubSink and ngOnInit() (no longer needed)
+ * 5. Added ChangeDetectionStrategy.OnPush for zoneless operation
+ */
+import { Component, EventEmitter, Output, ViewChild, ChangeDetectionStrategy, input, effect, inject } from '@angular/core';
 import { MatTable, MatTableDataSource } from '@angular/material/table';
 import { MatPaginator } from '@angular/material/paginator';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSort } from '@angular/material/sort';
 import { Router } from '@angular/router';
-
-import { SubSink } from 'subsink';
-import { Observable, tap } from 'rxjs';
 
 import { Budget, BudgetRecord } from '@app/model/finance/planning/budgets';
 
@@ -18,14 +25,44 @@ import { ChildBudgetsModalComponent } from '../../modals/child-budgets-modal/chi
   selector: 'app-budget-table',
   templateUrl: './budget-table.component.html',
   styleUrls: ['./budget-table.component.scss'],
+  // REFACTORED: OnPush change detection makes component zoneless
+  // Only triggers change detection when signals change or events occur
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 
 export class BudgetTableComponent {
 
-  private _sbS = new SubSink();
+  // REFACTORED: Using inject() instead of constructor injection
+  // Benefits: Can be used in class fields, better tree-shaking, modern Angular pattern
+  private _router$$ = inject(Router);
+  private _dialog = inject(MatDialog);
 
-  @Input() budgets$: Observable<{overview: BudgetRecord[], budgets: any[]}>;
-  @Input() canPromote = false;
+  /**
+   * REFACTORED: Converted from @Input() to signal-based input
+   * 
+   * Before: @Input() budgets$: Observable<{overview: BudgetRecord[], budgets: any[]}>;
+   * After: budgets = input.required<...>()
+   * 
+   * Benefits:
+   * - Type-safe: TypeScript enforces the type
+   * - Required: input.required() ensures the input is always provided
+   * - Reactive: Automatically tracked by Angular's change detection
+   * - Access: Use this.budgets() to get the current value
+   * 
+   * Usage in template: [budgets]="signalValue()"
+   */
+  budgets = input.required<{overview: BudgetRecord[], budgets: any[]}>();
+
+  /**
+   * REFACTORED: Converted from @Input() to signal-based input with default value
+   * 
+   * Before: @Input() canPromote = false;
+   * After: canPromote = input<boolean>(false)
+   * 
+   * The default value (false) is used if the input is not provided.
+   * Access the value using: this.canPromote()
+   */
+  canPromote = input<boolean>(false);
 
   @Output() doPromote: EventEmitter<void> = new EventEmitter();
 
@@ -38,15 +75,46 @@ export class BudgetTableComponent {
 
   overviewBudgets: BudgetRecord[] = [];
 
-  constructor(private _router$$: Router,
-              private _dialog: MatDialog,
-  ) { }
-
-  ngOnInit(): void {
-    this._sbS.sink = this.budgets$.pipe(tap((o) => {
-      this.overviewBudgets = o.overview;
-      this.dataSource.data = o.budgets;
-    })).subscribe();
+  constructor() {
+    /**
+     * REFACTORED: Replaced subscription with effect()
+     * 
+     * Before:
+     *   ngOnInit(): void {
+     *     this._sbS.sink = this.budgets$.pipe(tap((o) => {
+     *       this.overviewBudgets = o.overview;
+     *       this.dataSource.data = o.budgets;
+     *     })).subscribe();
+     *   }
+     * 
+     * After:
+     *   constructor() {
+     *     effect(() => { ... });
+     *   }
+     * 
+     * Benefits:
+     * - No manual subscription management
+     * - No need for SubSink or cleanup
+     * - Automatically tracks signal dependencies
+     * - Runs whenever budgets() signal changes
+     * - Runs in a reactive context, ensuring proper change detection
+     * 
+     * effect() automatically tracks any signals read inside it.
+     * When budgets() changes, this effect runs again.
+     */
+    effect(() => {
+      // Access signal value by calling it as a function
+      const budgetsData = this.budgets();
+      
+      if (budgetsData) {
+        // Update component state reactively
+        this.overviewBudgets = budgetsData.overview;
+        this.dataSource.data = budgetsData.budgets;
+        
+        // Note: ViewChild references (paginator, sort) are not available
+        // in constructor/effect, so we handle them in ngAfterViewInit()
+      }
+    });
   }
 
   /** 
@@ -66,9 +134,24 @@ export class BudgetTableComponent {
     return false;
   }
 
+  /**
+   * REFACTORED: ViewChild setup moved here because ViewChild references
+   * are not available in constructor/effect()
+   * 
+   * This ensures paginator and sort are set up after the view is initialized.
+   * We also update dataSource.data here in case the budgets signal was set
+   * before the view was initialized.
+   */
   ngAfterViewInit(): void {
+    // Set up Material table pagination and sorting
     this.dataSource.paginator = this.paginator;
     this.dataSource.sort = this.sort;
+    
+    // Update dataSource in case budgets signal was set before view init
+    const budgetsData = this.budgets();
+    if (budgetsData) {
+      this.dataSource.data = budgetsData.budgets;
+    }
   }
 
   filterAccountRecords(event: Event) {
@@ -80,8 +163,16 @@ export class BudgetTableComponent {
     }
   }
 
+  /**
+   * REFACTORED: Access signal input value using function call
+   * 
+   * Before: if (this.canPromote)
+   * After: if (this.canPromote())
+   * 
+   * Signal inputs must be called as functions to access their values.
+   */
   promote() {
-    if (this.canPromote)
+    if (this.canPromote())
       this.doPromote.emit();
   }
 

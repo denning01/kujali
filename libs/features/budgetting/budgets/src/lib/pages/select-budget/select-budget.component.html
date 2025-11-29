@@ -18,7 +18,11 @@
     </div>
 
     <div class="table-container">
-      <app-budget-table [budgets$]="allBudgets$"></app-budget-table>
+      <!-- REFACTORED: Pass signal value instead of Observable -->
+      <!-- Before: [budgets$]="allBudgets$" -->
+      <!-- After: [budgets]="allBudgets()" -->
+      <!-- The () calls the signal to get its current value -->
+      <app-budget-table [budgets]="allBudgets()"></app-budget-table>
     </div>
   </div>
 </app-page>
