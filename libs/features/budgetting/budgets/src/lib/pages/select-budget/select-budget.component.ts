@@ -1,8 +1,8 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, ChangeDetectionStrategy, inject, computed } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
+import { toSignal } from '@angular/core/rxjs-interop';
 
 import { cloneDeep as ___cloneDeep, flatMap as __flatMap } from 'lodash';
-import { Observable, combineLatest, map, tap } from 'rxjs';
 
 import { Logger } from '@iote/bricks-angular';
 
@@ -18,38 +18,44 @@ import { CreateBudgetModalComponent } from '../../components/create-budget-modal
   templateUrl: './select-budget.component.html',
   styleUrls: ['./select-budget.component.scss', 
               '../../components/budget-view-styles.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 /** List of all active budgets on the system. */
-export class SelectBudgetPageComponent implements OnInit
+export class SelectBudgetPageComponent
 {
-  /** Overview which contains all budgets of an organisation */
-  overview$!: Observable<OrgBudgetsOverview>;
-  sharedBudgets$: Observable<any[]>;
+  // Inject dependencies using inject() instead of constructor
+  private _orgBudgets$$ = inject(OrgBudgetsStore);
+  private _budgets$$ = inject(BudgetsStore);
+  private _dialog = inject(MatDialog);
+  private _logger = inject(Logger);
+
+  /** Overview which contains all budgets of an organisation - converted to signal */
+  overview = toSignal(this._orgBudgets$$.get(), { initialValue: { inUse: [], underConstruction: [], archived: [] } as OrgBudgetsOverview });
+
+  /** Shared budgets - converted to signal */
+  sharedBudgets = toSignal(this._budgets$$.get(), { initialValue: [] });
 
   showFilter = false;
 
-  // budgetsLoaded: boolean = false;
+  /** Computed signal that combines overview and budgets */
+  allBudgets = computed(() => {
+    const overview = this.overview();
+    const budgets = this.sharedBudgets();
+    
+    if (!overview || !budgets) {
+      return { overview: [], budgets: [] };
+    }
 
-  allBudgets$: Observable<{overview: BudgetRecord[], budgets: any[]}>;
+    const flatOverview = __flatMap(overview);
+    const flatBudgets = __flatMap(budgets);
+    
+    const trBudgets = flatBudgets.map((budget: any) => {
+      budget['endYear'] = budget.startYear + budget.duration - 1;
+      return budget;
+    });
 
-  constructor(private _orgBudgets$$: OrgBudgetsStore,
-              private _budgets$$: BudgetsStore,
-              private _dialog: MatDialog,
-              private _logger: Logger) 
-  { }
-
-  ngOnInit() {
-    this.overview$ = this._orgBudgets$$.get();
-    this.sharedBudgets$ = this._budgets$$.get();
-
-    this.allBudgets$ = combineLatest([this.overview$, this._budgets$$.get()])
-                      .pipe(map(([overview, budgets]) => {return {overview: __flatMap(overview), budgets: __flatMap(budgets)}}),
-                            map((overview) => {
-                              const trBudgets = overview.budgets.map((budget: any) => {budget['endYear'] = budget.startYear + budget.duration - 1; return budget;})
-                              // this.budgetsLoaded = true;
-                              return {overview: overview.overview, budgets: trBudgets}
-                            }));
-  }
+    return { overview: flatOverview, budgets: trBudgets };
+  });
 
   applyFilter(event: Event) {
     const filterValue = (event.target as HTMLInputElement).value;
@@ -98,11 +104,18 @@ export class SelectBudgetPageComponent implements OnInit
     toSave.status = BudgetStatus.InUse;
 
     (<any> record).updating = true;
-    // Fire update
+    // Fire update - using subscribe for now as store returns Observable
+    // In a fully signal-based approach, this would be refactored to return a signal
     this._budgets$$.update(toSave)
-      .subscribe(() => {
-        (<any> record).updating = false;
-        this._logger.log(() => `Updated Budget with id ${toSave.id}. Set as an active budget for this org.`) 
+      .subscribe({
+        next: () => {
+          (<any> record).updating = false;
+          this._logger.log(() => `Updated Budget with id ${toSave.id}. Set as an active budget for this org.`);
+        },
+        error: (error) => {
+          (<any> record).updating = false;
+          this._logger.log(() => `Error updating budget: ${error}`);
+        }
       });
   }
 }

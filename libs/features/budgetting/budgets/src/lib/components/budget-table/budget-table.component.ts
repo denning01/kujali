@@ -1,12 +1,9 @@
-import { Component, EventEmitter, Input, Output, ViewChild } from '@angular/core';
+import { Component, EventEmitter, Output, ViewChild, ChangeDetectionStrategy, input, effect, inject } from '@angular/core';
 import { MatTable, MatTableDataSource } from '@angular/material/table';
 import { MatPaginator } from '@angular/material/paginator';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSort } from '@angular/material/sort';
 import { Router } from '@angular/router';
-
-import { SubSink } from 'subsink';
-import { Observable, tap } from 'rxjs';
 
 import { Budget, BudgetRecord } from '@app/model/finance/planning/budgets';
 
@@ -18,14 +15,18 @@ import { ChildBudgetsModalComponent } from '../../modals/child-budgets-modal/chi
   selector: 'app-budget-table',
   templateUrl: './budget-table.component.html',
   styleUrls: ['./budget-table.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 
 export class BudgetTableComponent {
 
-  private _sbS = new SubSink();
+  // Inject dependencies using inject() instead of constructor
+  private _router$$ = inject(Router);
+  private _dialog = inject(MatDialog);
 
-  @Input() budgets$: Observable<{overview: BudgetRecord[], budgets: any[]}>;
-  @Input() canPromote = false;
+  // Signal-based inputs
+  budgets = input.required<{overview: BudgetRecord[], budgets: any[]}>();
+  canPromote = input<boolean>(false);
 
   @Output() doPromote: EventEmitter<void> = new EventEmitter();
 
@@ -38,15 +39,15 @@ export class BudgetTableComponent {
 
   overviewBudgets: BudgetRecord[] = [];
 
-  constructor(private _router$$: Router,
-              private _dialog: MatDialog,
-  ) { }
-
-  ngOnInit(): void {
-    this._sbS.sink = this.budgets$.pipe(tap((o) => {
-      this.overviewBudgets = o.overview;
-      this.dataSource.data = o.budgets;
-    })).subscribe();
+  constructor() {
+    // Use effect() to reactively update dataSource when budgets signal changes
+    effect(() => {
+      const budgetsData = this.budgets();
+      if (budgetsData) {
+        this.overviewBudgets = budgetsData.overview;
+        this.dataSource.data = budgetsData.budgets;
+      }
+    });
   }
 
   /** 
@@ -67,8 +68,15 @@ export class BudgetTableComponent {
   }
 
   ngAfterViewInit(): void {
+    // Update paginator and sort when view is initialized
     this.dataSource.paginator = this.paginator;
     this.dataSource.sort = this.sort;
+    
+    // Also update dataSource in case budgets signal was set before view init
+    const budgetsData = this.budgets();
+    if (budgetsData) {
+      this.dataSource.data = budgetsData.budgets;
+    }
   }
 
   filterAccountRecords(event: Event) {
@@ -81,7 +89,7 @@ export class BudgetTableComponent {
   }
 
   promote() {
-    if (this.canPromote)
+    if (this.canPromote())
       this.doPromote.emit();
   }
 
